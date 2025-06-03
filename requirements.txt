@@ -1,0 +1,60 @@
+### CORE DEPENDENCIES ###
+# Async Support
+httpx==0.24.1
+anyio==3.7.1
+
+# Data Science
+numpy==1.24.4
+pandas==1.5.3
+scipy==1.10.1
+matplotlib==3.7.2
+
+# Database
+psycopg2-binary==2.9.6
+SQLAlchemy==2.0.19
+
+# Utilities
+python-dotenv==1.0.0
+loguru==0.7.0
+tqdm==4.65.0
+
+### DEVELOPMENT DEPENDENCIES ###
+# Testing
+pytest==7.4.0
+pytest-cov==4.1.0
+factory-boy==3.2.1
+
+# Linting & Formatting
+flake8==6.1.0
+black==23.7.0
+isort==5.12.0
+mypy==1.5.1
+
+# Documentation
+mkdocs==1.5.2
+mkdocs-material==9.2.3
+
+### OPTIONAL DEPENDENCIES ###
+# [optional] AWS SDK
+boto3==1.28.42
+
+# Web Framework
+#Django==4.2.6
+#Flask==2.3.2
+
+# [optional] Data Visualization
+#plotly==5.15.0
+#seaborn==0.12.2
+
+### VERSION SPECIFIERS ###
+# Format examples:
+# package>=1.0.0  # Minimum version
+# package~=1.2.3  # Compatible release (~=1.2.3 means >=1.2.3,<1.3.0)
+# package==1.2.3  # Exact version
+
+
+### PACKAGE SOURCES (MANDATORY) ###
+# The PACKAGE SOURCES section in your requirements.txt file controls where pip looks for Python packages during installation.
+#--index-url https://pypi.org/simple/
+#--extra-index-url https://private-repo.example.com/simple/
+#--trusted-host private-repo.example.com

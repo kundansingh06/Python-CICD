@@ -1,0 +1,140 @@
+pipeline {
+    agent any
+
+    environment {
+        // Project Configuration
+        PROJECT_NAME = 'Python-CICD'
+        PYTHON = 'python'
+
+        // SonarQube Configuration
+        SONAR_SCANNER_HOME = tool 'SonarScanner'
+        SONAR_PROJECT_KEY = 'python-cicd'
+        SONAR_PROJECT_NAME = 'Python-CICD'
+
+        // JFrog Artifactory Configuration
+        ARTIFACTORY_URL = 'https://your-artifactory-instance.jfrog.io/artifactory'
+        ARTIFACTORY_REPO = 'python-repo'
+        ARTIFACTORY_CREDS = credentials('artifactory-credentials') // Store username:password in Jenkins
+    }
+
+    stages {
+        stage('Checkout & Setup') {
+            steps {
+                checkout scm
+                bat """
+                    ${PYTHON} -m pip install --upgrade pip
+                    pip install -r requirements.txt
+                    pip install wheel twine pytest pytest-cov
+                    pip install sonarqube-community-plugin
+                """
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    bat """
+                        ${SONAR_SCANNER_HOME}\\bin\\sonar-scanner.bat ^
+                          -Dsonar.projectKey=${SONAR_PROJECT_KEY} ^
+                          -Dsonar.projectName=${SONAR_PROJECT_NAME} ^
+                          -Dsonar.sources=src ^
+                          -Dsonar.python.coverage.reportPaths=coverage.xml ^
+                          -Dsonar.host.url=${SONARQUBE_URL} ^
+                          -Dsonar.login=${SONARQUBE_TOKEN}
+                    """
+                }
+            }
+        }
+
+        stage('Build & Test') {
+            steps {
+                script {
+                    // Versioning
+                    def gitCommit = bat(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    def currentVersion = readFile('setup.py').find(/version=['"]([^'"]*)['"]/)[0][1]
+                    env.RELEASE_VERSION = "${currentVersion}.${env.BUILD_NUMBER}-${gitCommit}"
+
+                    // Update setup.py
+                    bat """
+                        powershell -Command "(Get-Content setup.py) -replace 'version=\\'[^\\']*\\'', 'version=\\'${env.RELEASE_VERSION}\\'' | Set-Content setup.py"
+                    """
+
+                    // Build and Test
+                    bat """
+                        ${PYTHON} setup.py sdist bdist_wheel
+                        ${PYTHON} -m pytest tests/ --cov=src --cov-report=xml:coverage.xml --junitxml=test-results.xml
+                    """
+                }
+            }
+        }
+
+        stage('Upload to JFrog Artifactory') {
+            steps {
+                script {
+                    // Configure JFrog CLI (if not already configured)
+                    bat """
+                        jfrog config add artifactory --url=${ARTIFACTORY_URL} --user=${ARTIFACTORY_CREDS_USR} --password=${ARTIFACTORY_CREDS_PSW} --interactive=false
+                    """
+
+                    // Upload artifacts
+                    bat """
+                        jfrog rt upload "dist/*" ${ARTIFACTORY_REPO}/${PROJECT_NAME}/${env.RELEASE_VERSION}/ --flat=false
+                        jfrog rt upload "coverage.xml" ${ARTIFACTORY_REPO}/${PROJECT_NAME}/${env.RELEASE_VERSION}/ --flat=false
+                    """
+
+                    // Set build info
+                    bat """
+                        jfrog rt build-collect-env
+                        jfrog rt build-publish --build-url=${env.BUILD_URL}
+                    """
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Tag Release') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'github-credentials',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )]) {
+                        bat """
+                            git config --global user.email "jenkins@example.com"
+                            git config --global user.name "Jenkins CI"
+                            git tag -a "v${env.RELEASE_VERSION}" -m "Jenkins release ${env.RELEASE_VERSION}"
+                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/kundansingh06/Python-CICD.git "v${env.RELEASE_VERSION}"
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            bat 'rmdir /s /q dist build coverage.xml test-results.xml || exit 0'
+        }
+        success {
+            script {
+                def artifactoryPath = "${ARTIFACTORY_URL}/webapp/#/artifacts/browse/tree/General/${ARTIFACTORY_REPO}/${PROJECT_NAME}/${env.RELEASE_VERSION}"
+                echo """
+                Build Success!
+                SonarQube Report: ${SONARQUBE_URL}/dashboard?id=${SONAR_PROJECT_KEY}
+                Artifacts in JFrog: ${artifactoryPath}
+                """
+            }
+        }
+        failure {
+            echo 'Build failed! Check logs for details.'
+        }
+    }
+}

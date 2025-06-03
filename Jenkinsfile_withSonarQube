@@ -1,0 +1,126 @@
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_NAME = 'Python-CICD'
+        PYTHON = 'python'
+        ARTIFACT_DIR = "C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Build_PythonProject\\artifacts"
+
+        // SonarQube configuration
+        SONAR_SCANNER_HOME = tool 'SonarScanner'  // Name of SonarScanner tool configured in Jenkins
+        SONAR_PROJECT_KEY = 'python-cicd'         // Unique project key in SonarQube
+        SONAR_PROJECT_NAME = 'Python-CICD'        // Display name in SonarQube
+    }
+
+    stages {
+        stage('Checkout & Setup') {
+            steps {
+                checkout scm
+                bat """
+                    ${PYTHON} -m pip install --upgrade pip
+                    pip install -r requirements.txt
+                    pip install wheel twine pytest
+                    pip install sonarqube-community-plugin  # Python SonarQube plugin
+                """
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {  // Name of SonarQube server configured in Jenkins
+                    bat """
+                        ${SONAR_SCANNER_HOME}\\bin\\sonar-scanner.bat ^
+                          -Dsonar.projectKey=${SONAR_PROJECT_KEY} ^
+                          -Dsonar.projectName=${SONAR_PROJECT_NAME} ^
+                          -Dsonar.projectVersion=${env.BUILD_NUMBER} ^
+                          -Dsonar.sources=src ^
+                          -Dsonar.python.coverage.reportPaths=coverage.xml ^
+                          -Dsonar.language=py ^
+                          -Dsonar.sourceEncoding=UTF-8
+                    """
+                }
+            }
+        }
+
+        stage('Build Package') {
+            steps {
+                script {
+                    def gitCommit = bat(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+                    def setupContent = readFile('setup.py')
+                    def currentVersion = (setupContent =~ /version=['"]([^'"]*)['"]/)[0][1]
+                    env.RELEASE_VERSION = "${currentVersion}+build.${env.BUILD_NUMBER}.${gitCommit}"
+
+                    bat """
+                        powershell -Command "(Get-Content setup.py) -replace 'version=\\'[^\\']*\\'', 'version=\\'${env.RELEASE_VERSION}\\'' | Set-Content setup.py"
+                    """
+                    bat "${PYTHON} setup.py sdist bdist_wheel"
+                }
+            }
+        }
+
+        stage('Run Tests with Coverage') {
+            steps {
+                bat """
+                    ${PYTHON} -m pytest tests/ --cov=src --cov-report=xml:coverage.xml --verbose
+                """
+            }
+        }
+
+        stage('Store Artifacts') {
+            steps {
+                script {
+                    bat """
+                        if not exist "${ARTIFACT_DIR}" mkdir "${ARTIFACT_DIR}"
+                        copy "dist\\*" "${ARTIFACT_DIR}\\"
+                        copy "coverage.xml" "${ARTIFACT_DIR}\\"
+                    """
+                    archiveArtifacts artifacts: 'dist/*,coverage.xml', fingerprint: true
+                }
+            }
+        }
+
+        stage('Quality Gate Check') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Tag Release') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'github-credentials',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )]) {
+                        bat """
+                            git config --global user.email "jenkins@example.com"
+                            git config --global user.name "Jenkins CI"
+                            git tag -a "v${env.RELEASE_VERSION}" -m "Jenkins release ${env.RELEASE_VERSION}"
+                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/kundansingh06/Python-CICD.git "v${env.RELEASE_VERSION}"
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            bat 'rmdir /s /q dist build coverage.xml || exit 0'
+        }
+        success {
+            bat """
+                echo Successfully built ${PROJECT_NAME} ${env.RELEASE_VERSION}
+                echo SonarQube report available at ${env.SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}
+                echo Artifacts stored in:
+                dir "${ARTIFACT_DIR}"
+            """
+        }
+        failure {
+            bat 'echo Build failed! Check logs for details.'
+        }
+    }
+}

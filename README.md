@@ -8,6 +8,7 @@ alwasy create with Virtual Environment
 #    source venv/bin/activate (Linux/Mac)
 #    venv\Scripts\activate (Windows)
 
+
 ## Steps 2: ##
 create folder
 a) src
@@ -17,6 +18,7 @@ c)create manually -> requirements.txt or pip freeze requirements.txt
 #    pip install -r requirements.txt
 # 4. For development:
 #    pip install -r requirements-dev.txt
+
 
 ## Steps 3.1: execute setup.py##
 Purpose: Installs the package in development mode (linked to source code).
